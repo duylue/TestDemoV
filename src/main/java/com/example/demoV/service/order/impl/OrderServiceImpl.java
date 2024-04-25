@@ -22,6 +22,10 @@ import java.util.*;
 @Service("OrderService")
 public class OrderServiceImpl extends BaseResponse implements OrderService {
     private final OrderRepository orderRepository;
+    private final ObjectMapper objectMapper;
+    private final ProductRepository productRepository;
+    private final OrderDetailRepository orderDetailRepository;
+
     public OrderServiceImpl(OrderRepository orderRepository, ProductRepository productRepository, OrderDetailRepository orderDetailRepository, ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
@@ -33,16 +37,6 @@ public class OrderServiceImpl extends BaseResponse implements OrderService {
     public ResponseEntity<?> getList() {
         return getResponse(orderRepository.findAll());
     }
-
-    private final ProductRepository productRepository;
-
-    @Override
-    @Transactional
-    public ResponseEntity<?> save(Order order) {
-        return getResponse(orderRepository.save(order));
-    }
-
-    private final OrderDetailRepository orderDetailRepository;
 
     @Transactional
     @Override
@@ -62,9 +56,14 @@ public class OrderServiceImpl extends BaseResponse implements OrderService {
                 //trước khi update sản phẩm trong đơn hàng cần trả lại hàng về kho
                 List<OrderDetail> orderDetailList = orderDetailRepository.findAllByOrderId(dto.getOrderId());
                 orderDetailList.forEach(e -> {
-                    int iQty = productRepository.getIQtyByPid(e.getProductId());
-                    iQty = iQty + e.getQuantity();
-                    productRepository.updateIQty(e.getProductId(), iQty);
+                    try {
+                        int iQty = productRepository.getIQtyByPid(e.getProductId());
+                        iQty = iQty + e.getQuantity();
+                        productRepository.updateIQty(e.getProductId(), iQty);
+                    } catch (Exception ex) {
+                        throw new NotFoundException(MessageCommon.PRODUCT_NOT_FOUND);
+                    }
+
                 });
                 // nếu không phải hủy đơn thì mới xóa sản phẩm trong order detail để insert lại
                 if (!dto.getStatus().equals(MessageCommon.ORDER_CANCEL)) {
@@ -75,13 +74,16 @@ public class OrderServiceImpl extends BaseResponse implements OrderService {
             if (!dto.getStatus().equals(MessageCommon.ORDER_CANCEL)) {
                 for (OrderedProductsDto e : list
                 ) {
-                    int iQty = productRepository.getIQtyByPid(e.getProductId());
-                    if (iQty < e.getQty()) {
-                        throw new BusinessException(MessageCommon.QTY_EXCEEDED);
-                    } else {
-                        iQty = iQty - e.getQty();
-                        productRepository.updateIQty(e.getProductId(), iQty);
-
+                    try {
+                        int iQty = productRepository.getIQtyByPid(e.getProductId());
+                        if (iQty < e.getQty()) {
+                            throw new BusinessException(MessageCommon.QTY_EXCEEDED);
+                        } else {
+                            iQty = iQty - e.getQty();
+                            productRepository.updateIQty(e.getProductId(), iQty);
+                        }
+                    } catch (Exception ex) {
+                        throw new NotFoundException(MessageCommon.PRODUCT_NOT_FOUND);
                     }
                     OrderDetail orderDetail = new OrderDetail();
                     orderDetail.setOrderId(order.getOrderId());
@@ -93,22 +95,12 @@ public class OrderServiceImpl extends BaseResponse implements OrderService {
             orderDetailRepository.saveAll(orderDetails);
         }
 
-
         return getResponse(order);
     }
 
-
-    @Override
-    public ResponseEntity<?> delete(int id) {
-        orderRepository.deleteById(id);
-        return getResponse("success");
-    }
-
-    private final ObjectMapper objectMapper;
-
     @Override
     public ResponseEntity<?> searchAllByCustomerOrOrderId(String cname, int id) {
-        return getResponse(orderRepository.searchAllByOrderIdOrCustomerName(id,cname));
+        return getResponse(orderRepository.searchAllByOrderIdOrCustomerName(id, cname));
     }
 
     private OrderDetailDto getOrderDetailDto(Order order) {
@@ -132,6 +124,5 @@ public class OrderServiceImpl extends BaseResponse implements OrderService {
         }
         return getResponse(getOrderDetailDto(optionalOrder.get()));
     }
-
 
 }
